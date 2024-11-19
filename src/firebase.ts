@@ -1,7 +1,8 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+import { getFirestore, collection, addDoc, onSnapshot, query, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import type { Workspace, Note } from './types';
 
 const firebaseConfig = {
     apiKey: "AIzaSyCnIusN2kXesUqy5GBrP3uWuaAH85K6KNE",
@@ -17,3 +18,55 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+// Firestore operations
+export const saveWorkspace = async (workspace: Omit<Workspace, 'id'>) => {
+  try {
+    const docRef = await addDoc(collection(db, 'workspaces'), workspace);
+    return docRef.id;
+  } catch (error) {
+    console.error('Error saving workspace:', error);
+    throw error;
+  }
+};
+
+export const getAllWorkspaces = (callback: (workspaces: Workspace[]) => void) => {
+  const q = query(collection(db, 'workspaces'));
+  return onSnapshot(q, (querySnapshot) => {
+    const workspaces: Workspace[] = [];
+    querySnapshot.forEach((doc) => {
+      workspaces.push({ id: doc.id, ...doc.data() } as Workspace);
+    });
+    callback(workspaces);
+  });
+};
+
+export const updateWorkspace = async (workspaceId: string, data: Partial<Workspace>) => {
+  try {
+    const workspaceRef = doc(db, 'workspaces', workspaceId);
+    await updateDoc(workspaceRef, data);
+  } catch (error) {
+    console.error('Error updating workspace:', error);
+    throw error;
+  }
+};
+
+export const deleteWorkspace = async (workspaceId: string) => {
+  try {
+    await deleteDoc(doc(db, 'workspaces', workspaceId));
+  } catch (error) {
+    console.error('Error deleting workspace:', error);
+    throw error;
+  }
+};
+
+export const saveRecording = async (audioBlob: Blob, workspaceId: string, noteId: string) => {
+  try {
+    const storageRef = ref(storage, `recordings/${workspaceId}/${noteId}/${Date.now()}.webm`);
+    await uploadBytes(storageRef, audioBlob);
+    return await getDownloadURL(storageRef);
+  } catch (error) {
+    console.error('Error saving recording:', error);
+    throw error;
+  }
+};

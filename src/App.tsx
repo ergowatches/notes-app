@@ -2,42 +2,36 @@ import React, { useState, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { Sidebar } from './components/Sidebar';
 import { NoteEditor } from './components/NoteEditor';
-import { Auth } from './components/Auth';
-import { auth, getAllWorkspaces, saveWorkspace, updateWorkspace, deleteWorkspace, saveRecording } from './firebase';
+import { db } from './firebase';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import type { Workspace, Note } from './types';
 
 const App: React.FC = () => {
-  const [user, setUser] = useState(auth.currentUser);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
   const [activeNote, setActiveNote] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
-      setUser(user);
-      setLoading(false);
+    const q = collection(db, 'workspaces');
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const workspacesData: Workspace[] = [];
+      querySnapshot.forEach((doc) => {
+        workspacesData.push({ id: doc.id, ...doc.data() } as Workspace);
+      });
+      setWorkspaces(workspacesData);
     });
 
-    const unsubscribeWorkspaces = getAllWorkspaces((workspaces) => {
-      setWorkspaces(workspaces);
-    });
-
-    return () => {
-      unsubscribeAuth();
-      unsubscribeWorkspaces();
-    };
+    return () => unsubscribe();
   }, []);
 
   const addWorkspace = async (name: string) => {
     try {
-      const workspaceId = await saveWorkspace({
+      const docRef = await addDoc(collection(db, 'workspaces'), {
         name,
         notes: [],
         createdAt: new Date(),
-        userId: user?.uid
       });
-      setActiveWorkspace(workspaceId);
+      setActiveWorkspace(docRef.id);
     } catch (error) {
       console.error('Error adding workspace:', error);
     }
@@ -56,7 +50,8 @@ const App: React.FC = () => {
           updatedAt: new Date(),
         };
 
-        await updateWorkspace(workspaceId, {
+        const workspaceRef = doc(db, 'workspaces', workspaceId);
+        await updateDoc(workspaceRef, {
           notes: [...workspace.notes, newNote]
         });
         setActiveNote(newNote.id);
@@ -73,20 +68,43 @@ const App: React.FC = () => {
         const updatedNotes = workspace.notes.map(note =>
           note.id === noteId ? { ...note, ...updates, updatedAt: new Date() } : note
         );
-        await updateWorkspace(workspaceId, { notes: updatedNotes });
+        
+        const workspaceRef = doc(db, 'workspaces', workspaceId);
+        await updateDoc(workspaceRef, {
+          notes: updatedNotes
+        });
       }
     } catch (error) {
       console.error('Error updating note:', error);
     }
   };
 
-  if (loading) {
-    return <div>Loading...</div>;
-  }
+  const deleteNote = async (workspaceId: string, noteId: string) => {
+    try {
+      const workspace = workspaces.find(w => w.id === workspaceId);
+      if (workspace) {
+        const workspaceRef = doc(db, 'workspaces', workspaceId);
+        await updateDoc(workspaceRef, {
+          notes: workspace.notes.filter(n => n.id !== noteId)
+        });
+        if (activeNote === noteId) setActiveNote(null);
+      }
+    } catch (error) {
+      console.error('Error deleting note:', error);
+    }
+  };
 
-  if (!user) {
-    return <Auth />;
-  }
+  const deleteWorkspace = async (workspaceId: string) => {
+    try {
+      await deleteDoc(doc(db, 'workspaces', workspaceId));
+      if (activeWorkspace === workspaceId) {
+        setActiveWorkspace(null);
+        setActiveNote(null);
+      }
+    } catch (error) {
+      console.error('Error deleting workspace:', error);
+    }
+  };
 
   return (
     <Layout>
@@ -101,29 +119,14 @@ const App: React.FC = () => {
           setActiveWorkspace(wId);
           setActiveNote(nId);
         }}
-        onDeleteNote={async (wId, nId) => {
-          const workspace = workspaces.find(w => w.id === wId);
-          if (workspace) {
-            await updateWorkspace(wId, {
-              notes: workspace.notes.filter(n => n.id !== nId)
-            });
-            if (activeNote === nId) setActiveNote(null);
-          }
-        }}
-        onDeleteWorkspace={async (wId) => {
-          await deleteWorkspace(wId);
-          if (activeWorkspace === wId) {
-            setActiveWorkspace(null);
-            setActiveNote(null);
-          }
-        }}
+        onDeleteNote={deleteNote}
+        onDeleteWorkspace={deleteWorkspace}
       />
       <NoteEditor
         workspaces={workspaces}
         activeWorkspace={activeWorkspace}
         activeNote={activeNote}
         onUpdateNote={updateNote}
-        onSaveRecording={saveRecording}
       />
     </Layout>
   );

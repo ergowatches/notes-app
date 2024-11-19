@@ -80,6 +80,33 @@ const App: React.FC = () => {
     }
   };
 
+  const deleteNote = async (workspaceId: string, noteId: string) => {
+    try {
+      const workspace = workspaces.find(w => w.id === workspaceId);
+      if (workspace) {
+        const workspaceRef = doc(db, 'workspaces', workspaceId);
+        await updateDoc(workspaceRef, {
+          notes: workspace.notes.filter(n => n.id !== noteId)
+        });
+        if (activeNote === noteId) setActiveNote(null);
+      }
+    } catch (error) {
+      console.error('Error deleting note:', error);
+    }
+  };
+
+  const deleteWorkspace = async (workspaceId: string) => {
+    try {
+      await deleteDoc(doc(db, 'workspaces', workspaceId));
+      if (activeWorkspace === workspaceId) {
+        setActiveWorkspace(null);
+        setActiveNote(null);
+      }
+    } catch (error) {
+      console.error('Error deleting workspace:', error);
+    }
+  };
+
   return (
     <Layout>
       <Sidebar
@@ -93,6 +120,8 @@ const App: React.FC = () => {
           setActiveWorkspace(wId);
           setActiveNote(nId);
         }}
+        onDeleteNote={deleteNote}
+        onDeleteWorkspace={deleteWorkspace}
       />
       <NoteEditor
         workspaces={workspaces}

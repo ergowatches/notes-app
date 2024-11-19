@@ -5,6 +5,7 @@ import { NoteEditor } from './components/NoteEditor';
 import { db } from './firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import type { Workspace, Note } from './types';
+import './index.css';
 
 const App: React.FC = () => {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -29,7 +30,7 @@ const App: React.FC = () => {
       const docRef = await addDoc(collection(db, 'workspaces'), {
         name,
         notes: [],
-        createdAt: new Date(),
+        createdAt: new Date()
       });
       setActiveWorkspace(docRef.id);
     } catch (error) {
@@ -47,7 +48,7 @@ const App: React.FC = () => {
           content: '',
           recordings: [],
           createdAt: new Date(),
-          updatedAt: new Date(),
+          updatedAt: new Date()
         };
 
         const workspaceRef = doc(db, 'workspaces', workspaceId);
@@ -79,33 +80,6 @@ const App: React.FC = () => {
     }
   };
 
-  const deleteNote = async (workspaceId: string, noteId: string) => {
-    try {
-      const workspace = workspaces.find(w => w.id === workspaceId);
-      if (workspace) {
-        const workspaceRef = doc(db, 'workspaces', workspaceId);
-        await updateDoc(workspaceRef, {
-          notes: workspace.notes.filter(n => n.id !== noteId)
-        });
-        if (activeNote === noteId) setActiveNote(null);
-      }
-    } catch (error) {
-      console.error('Error deleting note:', error);
-    }
-  };
-
-  const deleteWorkspace = async (workspaceId: string) => {
-    try {
-      await deleteDoc(doc(db, 'workspaces', workspaceId));
-      if (activeWorkspace === workspaceId) {
-        setActiveWorkspace(null);
-        setActiveNote(null);
-      }
-    } catch (error) {
-      console.error('Error deleting workspace:', error);
-    }
-  };
-
   return (
     <Layout>
       <Sidebar
@@ -119,8 +93,6 @@ const App: React.FC = () => {
           setActiveWorkspace(wId);
           setActiveNote(nId);
         }}
-        onDeleteNote={deleteNote}
-        onDeleteWorkspace={deleteWorkspace}
       />
       <NoteEditor
         workspaces={workspaces}

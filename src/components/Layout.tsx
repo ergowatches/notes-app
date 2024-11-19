@@ -5,7 +5,7 @@ interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ children }) => (
-  <div className="flex h-screen bg-white overflow-hidden">
+  <div className="flex w-full h-full bg-white">
     {children}
   </div>
 );

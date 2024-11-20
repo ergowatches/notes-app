@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Layout } from './components/Layout';
 import { Sidebar } from './components/Sidebar';
 import { NoteEditor } from './components/NoteEditor';
-import { db } from './firebase';
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { getAllWorkspaces, saveWorkspace, updateWorkspace, deleteWorkspace } from './firebase';
 import type { Workspace, Note } from './types';
 import './index.css';
 
@@ -12,27 +11,21 @@ const App: React.FC = () => {
   const [activeWorkspace, setActiveWorkspace] = useState<string | null>(null);
   const [activeNote, setActiveNote] = useState<string | null>(null);
 
+  // Subscribe to workspaces
   useEffect(() => {
-    const q = collection(db, 'workspaces');
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const workspacesData: Workspace[] = [];
-      querySnapshot.forEach((doc) => {
-        workspacesData.push({ id: doc.id, ...doc.data() } as Workspace);
-      });
+    const unsubscribe = getAllWorkspaces((workspacesData) => {
       setWorkspaces(workspacesData);
     });
-
     return () => unsubscribe();
   }, []);
 
   const addWorkspace = async (name: string) => {
     try {
-      const docRef = await addDoc(collection(db, 'workspaces'), {
+      await saveWorkspace({
         name,
         notes: [],
-        createdAt: new Date()
+        createdAt: new Date(),
       });
-      setActiveWorkspace(docRef.id);
     } catch (error) {
       console.error('Error adding workspace:', error);
     }
@@ -48,13 +41,13 @@ const App: React.FC = () => {
           content: '',
           recordings: [],
           createdAt: new Date(),
-          updatedAt: new Date()
+          updatedAt: new Date(),
         };
 
-        const workspaceRef = doc(db, 'workspaces', workspaceId);
-        await updateDoc(workspaceRef, {
+        await updateWorkspace(workspaceId, {
           notes: [...workspace.notes, newNote]
         });
+        
         setActiveNote(newNote.id);
       }
     } catch (error) {
@@ -70,8 +63,7 @@ const App: React.FC = () => {
           note.id === noteId ? { ...note, ...updates, updatedAt: new Date() } : note
         );
         
-        const workspaceRef = doc(db, 'workspaces', workspaceId);
-        await updateDoc(workspaceRef, {
+        await updateWorkspace(workspaceId, {
           notes: updatedNotes
         });
       }
@@ -84,8 +76,7 @@ const App: React.FC = () => {
     try {
       const workspace = workspaces.find(w => w.id === workspaceId);
       if (workspace) {
-        const workspaceRef = doc(db, 'workspaces', workspaceId);
-        await updateDoc(workspaceRef, {
+        await updateWorkspace(workspaceId, {
           notes: workspace.notes.filter(n => n.id !== noteId)
         });
         if (activeNote === noteId) setActiveNote(null);
@@ -95,9 +86,9 @@ const App: React.FC = () => {
     }
   };
 
-  const deleteWorkspace = async (workspaceId: string) => {
+  const deleteWorkspaceHandler = async (workspaceId: string) => {
     try {
-      await deleteDoc(doc(db, 'workspaces', workspaceId));
+      await deleteWorkspace(workspaceId);
       if (activeWorkspace === workspaceId) {
         setActiveWorkspace(null);
         setActiveNote(null);
@@ -121,7 +112,7 @@ const App: React.FC = () => {
           setActiveNote(nId);
         }}
         onDeleteNote={deleteNote}
-        onDeleteWorkspace={deleteWorkspace}
+        onDeleteWorkspace={deleteWorkspaceHandler}
       />
       <NoteEditor
         workspaces={workspaces}

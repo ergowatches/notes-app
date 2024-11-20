@@ -15,6 +15,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [recordingTitle, setRecordingTitle] = useState('');
   const [visualizerData, setVisualizerData] = useState<number[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -23,45 +24,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  const startVisualizer = (stream: MediaStream) => {
-    audioContextRef.current = new AudioContext();
-    analyserRef.current = audioContextRef.current.createAnalyser();
-    const source = audioContextRef.current.createMediaStreamSource(stream);
-    source.connect(analyserRef.current);
-    analyserRef.current.fftSize = 256;
-
-    const bufferLength = analyserRef.current.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
-    const updateVisualizer = () => {
-      if (analyserRef.current) {
-        analyserRef.current.getByteFrequencyData(dataArray);
-        const visualData = Array.from(dataArray)
-          .slice(0, 32)
-          .map(value => value / 255);
-        setVisualizerData(visualData);
-        animationFrameRef.current = requestAnimationFrame(updateVisualizer);
-      }
-    };
-
-    updateVisualizer();
-  };
-
-  const uploadToFirebase = async (audioBlob: Blob) => {
-    try {
-      const fileName = `recordings/${Date.now()}.webm`;
-      const storageRef = ref(storage, fileName);
-      await uploadBytes(storageRef, audioBlob);
-      const downloadUrl = await getDownloadURL(storageRef);
-      return downloadUrl;
-    } catch (error) {
-      console.error('Error uploading recording:', error);
-      throw error;
-    }
-  };
-
   const startRecording = async () => {
     try {
+      chunksRef.current = []; // Clear previous chunks
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -70,11 +35,8 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
         }
       });
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
+      const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = [];
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
@@ -82,62 +44,77 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
         }
       };
 
-      mediaRecorder.start(100);
-      setIsRecording(true);
+      // Set up visualizer
       startVisualizer(stream);
 
+      // Start recording
+      mediaRecorder.start(100);
+      setIsRecording(true);
+      setTimer(0);
       timerIntervalRef.current = window.setInterval(() => {
         setTimer(prev => prev + 1);
       }, 1000);
+
     } catch (err) {
-      console.error('Error accessing microphone:', err);
+      console.error('Error starting recording:', err);
       alert('Unable to access microphone. Please check permissions.');
     }
   };
 
   const stopRecording = async () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (!mediaRecorderRef.current || !isRecording) return;
+
+    try {
+      setIsSaving(true);
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-      setIsRecording(false);
-      clearIntervals();
-
-      await new Promise(resolve => {
+      
+      // Wait for the last data to be collected
+      await new Promise<void>((resolve) => {
         if (mediaRecorderRef.current) {
-          mediaRecorderRef.current.addEventListener('dataavailable', resolve, { once: true });
+          mediaRecorderRef.current.addEventListener('stop', () => resolve(), { once: true });
         }
       });
 
       const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
-      try {
-        const firebaseUrl = await uploadToFirebase(audioBlob);
-        setAudioUrl(firebaseUrl);
-        setRecordingTitle(`Recording ${new Date().toLocaleTimeString()}`);
-      } catch (error) {
-        console.error('Error handling recording:', error);
-        alert('Failed to save recording. Please try again.');
-      }
+      const fileName = `recordings/${Date.now()}.webm`;
+      const storageRef = ref(storage, fileName);
+
+      // Upload to Firebase Storage
+      await uploadBytes(storageRef, audioBlob);
+      const url = await getDownloadURL(storageRef);
+      
+      setAudioUrl(url);
+      setRecordingTitle(`Recording ${new Date().toLocaleTimeString()}`);
+      setIsRecording(false);
+      clearIntervals();
+      setIsSaving(false);
+
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+      setIsSaving(false);
+      alert('Failed to save recording. Please try again.');
     }
   };
 
-  const pauseRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.pause();
-      setIsPaused(true);
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-      }
-    }
-  };
+  const startVisualizer = (stream: MediaStream) => {
+    audioContextRef.current = new AudioContext();
+    analyserRef.current = audioContextRef.current.createAnalyser();
+    const source = audioContextRef.current.createMediaStreamSource(stream);
+    source.connect(analyserRef.current);
+    analyserRef.current.fftSize = 256;
 
-  const resumeRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.resume();
-      setIsPaused(false);
-      timerIntervalRef.current = window.setInterval(() => {
-        setTimer(prev => prev + 1);
-      }, 1000);
-    }
+    const updateVisualizer = () => {
+      if (analyserRef.current && isRecording) {
+        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+        analyserRef.current.getByteFrequencyData(dataArray);
+        const normalizedData = Array.from(dataArray.slice(0, 32)).map(value => value / 255);
+        setVisualizerData(normalizedData);
+        animationFrameRef.current = requestAnimationFrame(updateVisualizer);
+      }
+    };
+
+    updateVisualizer();
   };
 
   const clearIntervals = () => {
@@ -173,7 +150,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
           </button>
         </div>
 
-        {/* Visualizer */}
         <div className="h-32 bg-gray-900 rounded-xl p-4 mb-8 flex items-end justify-center space-x-1">
           {visualizerData.map((value, index) => (
             <div
@@ -185,19 +161,12 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
               }}
             />
           ))}
-          {!isRecording && !audioUrl && (
-            <div className="absolute text-white">
-              Press record to start
-            </div>
-          )}
         </div>
 
-        {/* Timer */}
         <div className="text-4xl font-mono text-center mb-8">
           {formatTime(timer)}
         </div>
 
-        {/* Controls */}
         <div className="flex justify-center items-center space-x-6 mb-8">
           {!isRecording && !audioUrl ? (
             <button
@@ -208,33 +177,17 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
               <span>Start Recording</span>
             </button>
           ) : isRecording ? (
-            <div className="flex items-center space-x-4">
-              {!isPaused ? (
-                <button
-                  onClick={pauseRecording}
-                  className="p-4 bg-gray-200 hover:bg-gray-300 rounded-full transition-colors"
-                >
-                  <Pause size={24} />
-                </button>
-              ) : (
-                <button
-                  onClick={resumeRecording}
-                  className="p-4 bg-blue-500 hover:bg-blue-600 text-white rounded-full transition-colors"
-                >
-                  <Play size={24} />
-                </button>
-              )}
-              <button
-                onClick={stopRecording}
-                className="p-4 bg-red-500 hover:bg-red-600 text-white rounded-full transition-colors"
-              >
-                <Square size={24} />
-              </button>
-            </div>
+            <button
+              onClick={stopRecording}
+              disabled={isSaving}
+              className="p-6 bg-red-500 hover:bg-red-600 rounded-full text-white transition-colors flex items-center space-x-2"
+            >
+              <Square size={24} />
+              <span>{isSaving ? 'Saving...' : 'Stop Recording'}</span>
+            </button>
           ) : null}
         </div>
 
-        {/* Preview and Save */}
         {audioUrl && !isRecording && (
           <div className="space-y-4">
             <input

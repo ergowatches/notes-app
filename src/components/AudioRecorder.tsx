@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Save, Trash2, Pause, Play, Waveform, X } from 'lucide-react';
+import { Mic, Square, Save, Trash2, X, Pause, Play } from 'lucide-react';
+import { storage } from '../firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 interface AudioRecorderProps {
   onSave: (audioUrl: string, duration: number, title: string) => void;
@@ -11,14 +13,14 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
   const [isPaused, setIsPaused] = useState(false);
   const [timer, setTimer] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [visualizerData, setVisualizerData] = useState<number[]>([]);
   const [recordingTitle, setRecordingTitle] = useState('');
-  
+  const [visualizerData, setVisualizerData] = useState<number[]>([]);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerIntervalRef = useRef<number | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
   const startVisualizer = (stream: MediaStream) => {
@@ -28,16 +30,34 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
     source.connect(analyserRef.current);
     analyserRef.current.fftSize = 256;
 
+    const bufferLength = analyserRef.current.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
     const updateVisualizer = () => {
-      if (!analyserRef.current) return;
-      const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-      analyserRef.current.getByteFrequencyData(dataArray);
-      const normalizedData = Array.from(dataArray.slice(0, 32)).map(value => value / 255);
-      setVisualizerData(normalizedData);
-      animationFrameRef.current = requestAnimationFrame(updateVisualizer);
+      if (analyserRef.current) {
+        analyserRef.current.getByteFrequencyData(dataArray);
+        const visualData = Array.from(dataArray)
+          .slice(0, 32)
+          .map(value => value / 255);
+        setVisualizerData(visualData);
+        animationFrameRef.current = requestAnimationFrame(updateVisualizer);
+      }
     };
 
     updateVisualizer();
+  };
+
+  const uploadToFirebase = async (audioBlob: Blob) => {
+    try {
+      const fileName = `recordings/${Date.now()}.webm`;
+      const storageRef = ref(storage, fileName);
+      await uploadBytes(storageRef, audioBlob);
+      const downloadUrl = await getDownloadURL(storageRef);
+      return downloadUrl;
+    } catch (error) {
+      console.error('Error uploading recording:', error);
+      throw error;
+    }
   };
 
   const startRecording = async () => {
@@ -62,13 +82,6 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
         }
       };
 
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
-        setAudioUrl(url);
-        setRecordingTitle(`Recording ${new Date().toLocaleTimeString()}`);
-      };
-
       mediaRecorder.start(100);
       setIsRecording(true);
       startVisualizer(stream);
@@ -82,12 +95,28 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
       setIsRecording(false);
       clearIntervals();
+
+      await new Promise(resolve => {
+        if (mediaRecorderRef.current) {
+          mediaRecorderRef.current.addEventListener('dataavailable', resolve, { once: true });
+        }
+      });
+
+      const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
+      try {
+        const firebaseUrl = await uploadToFirebase(audioBlob);
+        setAudioUrl(firebaseUrl);
+        setRecordingTitle(`Recording ${new Date().toLocaleTimeString()}`);
+      } catch (error) {
+        console.error('Error handling recording:', error);
+        alert('Failed to save recording. Please try again.');
+      }
     }
   };
 
@@ -95,7 +124,9 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.pause();
       setIsPaused(true);
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
     }
   };
 
@@ -130,7 +161,7 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
   }, []);
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-75 backdrop-blur-sm flex items-center justify-center">
+    <div className="fixed inset-0 bg-black bg-opacity-75 backdrop-blur-sm flex items-center justify-center z-50">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-8">
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-2xl font-bold">Voice Recording</h2>
@@ -242,3 +273,5 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSave, onClose })
     </div>
   );
 };
+
+export default AudioRecorder;
